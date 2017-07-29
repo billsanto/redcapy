@@ -9,6 +9,15 @@ This code was tested with Redcap version 7.4.7 and Python 3.5.  Only JSON output
 
 A notebook containing a template for unit tests has been provided.
 
+Currently, the following features are available:
+- import records
+- export records
+- export data dictionary
+- export events
+- delete single record
+- delete form
+
+
 ----
 ### Usage
 ```python
