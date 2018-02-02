@@ -1,5 +1,5 @@
 """
-    Redcapy.py interacts with more commonly used Redcap API methods.
+    Redcapy.py interacts with more commonly used Redcap 8.1.3 API endpoints.
 """
 
 import pycurl
@@ -9,9 +9,9 @@ from io import BytesIO
 from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 
-__version__ = '0.9.1'
+__version__ = '0.9.2'
 __author__ = 'William Santo'
-__date__ = 'July 2017'
+__date__ = 'Feb 2018'
 
 
 class Redcapy:
@@ -230,13 +230,38 @@ class Redcapy:
 
     def import_records(self, data_to_upload, **kwargs):
         """
-            Upload records into Redcap.
+            Upload single records into Redcap.  Bulk imports have not been tested.
             Note the post_data format field should match the data of the data field
             JSON data should be passed in as a string, formatted to dump into JSON format, or a list that can
                 be dumped into JSON.
             When passed as a jaon formatted string, the json should be enclosed with [].  If not present, then this
                 will add [].
             So the tested json data_to_upload format is a dict wrapped by json.dumps
+
+            Example USAGE:
+
+                If using a pandas Dataframe, for example, at minimum it needs to have the following column names:
+                  record_id
+                  redcap_event_name
+
+                For a repeating instrument, it should also have
+                 redcap_repeat_instrument (form name)
+                 redcap_repeat_instance (int, one-based, not zero-based)
+
+                And of course the name of any other valid Redcap fields
+                To update the form completion status, the column name is typically the form name (underscores for blanks),
+                followed by _complete.  The name can be verified by exporting from the API Playground in Redcap.
+                Then use data values of 0 or 1 or 2 for various completion states.  Form completion status is optional.
+
+                df_to_upload = pd.DataFrame('Your Data')
+                for i in range(len(df_to_upload)):
+                    record_to_upload = df_to_upload.iloc[i].to_json(orient='columns')
+                    import_return = rc.import_records(data_to_upload=record_to_upload)
+
+                It is your responsibility to check the response above and react to errors for each record.  Despite the
+                small performance overhead of single vs. bulk record imports, this makes it easy to manage exceptions
+                and retries.
+
 
             WARNING: Not all optional arguments have been tested.  Defaults are set in post_data.
 
@@ -247,7 +272,7 @@ class Redcapy:
                 content: record
                 format: json/csv/xml
                 type: flat/eav
-                overwriteBehavior: normal/overwrite
+                overwriteBehavior: normal/overwrite (Use overwrite to overwrite non-null fields with empty strings)
                 data: {your data}
                 dateFormat: MDY, DMY, YMD: NOTE: The default format is Y-M-D (with dashes), while MDY and DMY
                         values should always be formatted as M/D/Y or D/M/Y (with slashes), respectively.
@@ -306,7 +331,7 @@ class Redcapy:
             Delete a single record from Redcap.
             This has been reduced from a more general multiple record delete, which requires additional
                 keys in the format of record[0], record[1], record[2], ...
-            To delete multiple records, iterate a list of IDs in a loop
+            To delete multiple records, iterate a list of IDs in a loop, which is acceptable for small scale deletes
 
             WARNING: Not all optional arguments have been tested.  Defaults are set in post_data.
 
@@ -387,3 +412,93 @@ class Redcapy:
                     print('{} is not a valid key'.format(key))
 
         return self.__core_api_code__(post_data=post_data)
+
+    def import_file(self, record_id, field, event, filename, repeat_instance=None, **kwargs):
+        """
+            Upload a file into Redcap.
+
+            Example Usage:
+                from redcap.redcapy import Redcapy
+                redcap_token = os.environ['your project token string']
+                redcap_url = os.environ['redcap server url']
+                rc = Redcapy(api_token=redcap_token, redcap_url=redcap_url)
+                html_full_path = os.path.abspath('my_filename.html')
+                import_response = rc.import_file(event='data_import_arm_1',
+                                                 field='redcap_field_name',
+                                                 filename=html_full_path,
+                                                 record_id='1',
+                                                 repeat_instance='2',
+                                                )
+                # import_response is null if upload is successful
+
+            :param data_to_upload: json str
+            :param record_id: record_id
+            :param field: field name of field in Redcap
+            :param event: event name in Redcap
+            :param filename: file name (on local system) to import
+            # Note that unlike a data import, this next param is not called redcap_repeat_instance
+            :param repeat_instance: optional
+            :param kwargs:  Available options (check post_data for defaults)
+                token: {your token}
+
+            :return: None if successful, else potentially useful debugging info is returned
+        """
+
+        post_data = {
+            'token': self.redcap_token,
+            'content': 'file',
+            'format': 'json',
+            'action': 'import',
+            'record': record_id,
+            'field': field,
+            'event': event,
+            'returnFormat': 'json',
+            'file': (pycurl.FORM_FILE, filename),
+        }
+
+        if repeat_instance:
+            post_data['repeat_instance'] = str(repeat_instance)
+
+        if kwargs is not None:
+            for key, value in kwargs.items():
+                if key in ['token',
+                           'content',
+                           'format',
+                           'action',
+                           'record',
+                           'field',
+                           'event',
+                           'returnContent',
+                           'file',
+                           ]:
+                    post_data[key] = str(kwargs[key])
+                else:
+                    print('{} is not a valid key'.format(key))
+
+        else:
+            # TODO
+            pass
+
+        # Normally this would be processed by the core method, but it is customized here due to the null response.
+        buffer = BytesIO()
+        c = pycurl.Curl()
+        c.setopt(c.URL, self.redcap_url)
+        c.setopt(c.HTTPPOST, list(post_data.items()))
+        c.setopt(c.WRITEFUNCTION, buffer.write)
+        c.perform()
+        c.close()
+        return_value = str(buffer.getvalue(), 'utf-8')  # convert byte to str object
+        buffer.close()
+
+        if len(return_value) > 0:
+            try:
+                return json.loads(return_value)
+            except Exception as e:
+                return_soup = BeautifulSoup(str(return_value), 'xml')
+                return return_soup.hash.error.get_text()
+            else:
+                print('return_value was not loaded as a JSON nor XML object:', return_value)
+                return return_value
+        else:
+            return True
+
