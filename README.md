@@ -15,11 +15,11 @@ Currently, the following features are known to work in 8.1.3 and are being used 
 - import records
 - import file
 - export records
+- delete record
 
 The following worked in 7.4.7 but have not been tested recently.  Similarly, the unit test notebook has not been recently updated.
 - export data dictionary
 - export events
-- delete single record
 - delete form
 
 
@@ -65,6 +65,17 @@ import_response = rc.import_file(event='data_import_arm_1',
                                  repeat_instance='2',
                                 )
 ```
+#### Delete Entire Record from Redcap
+```python
+# This method is very convenient for development/testing, but use very carefully for production.
+# Delete all data for Record ID 30
+rc.delete_record(30)
+
+# Bulk delete: delete Record IDs 1-14.
+[rc.delete_record(id) for id in range(1, 15)]
+```
+
+
 
 
 
