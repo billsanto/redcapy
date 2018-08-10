@@ -4,22 +4,24 @@
 
 import pycurl
 import json
+import re
 
 from io import BytesIO
 from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 
-__version__ = '0.9.2'
+__version__ = '0.9.5'
 __author__ = 'William Santo'
-__date__ = 'Feb 2018'
+__date__ = 'June 2018'
 
 
 class Redcapy:
-    def __init__(self, api_token, redcap_url):
+    def __init__(self, api_token, redcap_url, verify_ssl=False):
         self.redcap_token = api_token
         self.redcap_url = redcap_url
+        self.verify_ssl = verify_ssl
 
-    def __core_api_code__(self, post_data, opt_post_data_kvpairs=None):
+    def __core_api_code(self, post_data, opt_post_data_kvpairs=None):
         """
             Common code elements to access Redcap API
 
@@ -46,6 +48,10 @@ class Redcapy:
         c = pycurl.Curl()
         c.setopt(c.URL, self.redcap_url)
 
+        if self.verify_ssl:
+            c.setopt(c.SSL_VERIFYPEER, 1)
+            c.setopt(c.SSL_VERIFYHOST, 2)
+
         if opt_post_data_kvpairs is not None:
             for key, value in opt_post_data_kvpairs.items():
                 post_data[key] = value
@@ -58,18 +64,36 @@ class Redcapy:
         return_value = str(buffer.getvalue(), 'utf-8')  # convert byte to str object
         buffer.close()
 
+        # export_survey_link returns a URL as a str, so try this first
+        if return_value and isinstance(return_value, str):
+            if self.__find_url(return_value) == return_value:
+                return return_value
+
         try:
             return json.loads(return_value)
-        except:  # delete method on error returns xml
-            return_soup = BeautifulSoup(str(return_value), 'xml')
-            return return_soup.hash.error.get_text()
-        else:
-            print('return_value was not loaded as a JSON nor XML object:', return_value)
-            return return_value
+        except Exception as e:  # delete method on error returns xml
+            try:
+                return_soup = BeautifulSoup(str(return_value), 'xml')
+                return return_soup.hash.error.get_text()
+            except Exception as e2:
+                print('Error: Data returned from Redcap was not a JSON nor XML object. Data: ', return_value)
+                return return_value
 
-    def __api_error_handler__(self, error_message):
+    def __api_error_handler(self, error_message):
         # TODO
         print('From __api_error_handler__ (this output may be expected in a unit test):', error_message)
+
+    @staticmethod
+    def __find_url(str_to_parse):
+        """
+            Ref: https://www.geeksforgeeks.org/python-check-url-string/
+        :param string:
+        :return: str, URL of the first URL found in the supplied str argument
+        """
+
+        url_list = re.findall('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]| [! * \(\),] | (?: %[0-9a-fA-F][0-9a-fA-F]))+',
+                              str_to_parse)
+        return url_list[0] if len(url_list) > 0 else ''
 
     def export_events(self, **kwargs):
         """
@@ -111,7 +135,7 @@ class Redcapy:
                 else:
                     print('{} is not a valid key'.format(key))          
 
-        return self.__core_api_code__(post_data=post_data)
+        return self.__core_api_code(post_data=post_data)
 
     def export_data_dictionary(self, **kwargs):
         """
@@ -155,7 +179,93 @@ class Redcapy:
                 else:
                     print('{} is not a valid key'.format(key))            
 
-        return self.__core_api_code__(post_data=post_data)
+        return self.__core_api_code(post_data=post_data)
+
+    def export_survey_link(self, instrument, event, record, **kwargs):
+        """
+            Export a survey link to a single survey based on required arguments.
+
+            Any changes to the POST data will be passed entirely to core_api_code method to
+                replace the default POST options.
+            Note that the format for returned data is the format field, not the returnFormat field.
+
+            :param kwargs: Available options (check post_data for defaults)
+                token: {your instance token}
+                content: metadata
+                format: json/csv/xml
+                returnFormat: json/csv/xml
+
+            :param instrument: Redcap instrument name
+            :param event: Redcap event name
+            :param record: record_id
+
+            :return: JSON object containing either the expected output or an error message from
+                    __core_api_code__ method
+        """
+
+        post_data = {
+            'token': self.redcap_token,
+            'content': 'surveyLink',
+            'format': 'json',
+            'instrument': instrument,
+            'event': event,
+            'record': record,
+            'returnFormat': 'json',
+        }
+
+        if kwargs is not None:
+            for key, value in kwargs.items():
+                if key in ['token',
+                           'content',
+                           'format',
+                           'returnFormat']:
+                    post_data[key] = kwargs[key]
+                else:
+                    print('{} is not a valid key'.format(key))
+
+        return self.__core_api_code(post_data=post_data)
+
+    def export_survey_participants(self, instrument, event, **kwargs):
+        """
+            Export full list of surveys for a combination of instrument and event
+
+            Any changes to the POST data will be passed entirely to core_api_code method to
+                replace the default POST options.
+            Note that the format for returned data is the format field, not the returnFormat field.
+
+            :param kwargs: Available options (check post_data for defaults)
+                token: {your instance token}
+                content: metadata
+                format: json/csv/xml
+                returnFormat: json/csv/xml
+
+            :param instrument: Redcap instrument name
+            :param event: Redcap event name
+
+            :return: JSON object containing either the expected output or an error message from
+                    __core_api_code__ method
+        """
+
+        post_data = {
+            'token': self.redcap_token,
+            'content': 'participantList',
+            'format': 'json',
+            'instrument': instrument,
+            'event': event,
+            'returnFormat': 'json',
+        }
+
+        if kwargs is not None:
+            for key, value in kwargs.items():
+                if key in ['token',
+                           'content',
+                           'format',
+                           'returnFormat']:
+                    post_data[key] = kwargs[key]
+                else:
+                    print('{} is not a valid key'.format(key))
+
+        return self.__core_api_code(post_data=post_data)
 
     def export_records(self, **kwargs):
         """
@@ -226,7 +336,7 @@ class Redcapy:
                 else:
                     print('{} is not a valid key'.format(key))                    
             
-        return self.__core_api_code__(post_data=post_data)
+        return self.__core_api_code(post_data=post_data)
 
     def import_records(self, data_to_upload, **kwargs):
         """
@@ -324,7 +434,7 @@ class Redcapy:
             # TODO
             pass
 
-        return self.__core_api_code__(post_data=post_data)
+        return self.__core_api_code(post_data=post_data)
 
     def delete_record(self, id_to_delete, **kwargs):
         """
@@ -363,7 +473,7 @@ class Redcapy:
                 else:
                     print('{} is not a valid key'.format(key))        
 
-        return self.__core_api_code__(post_data=post_data)
+        return self.__core_api_code(post_data=post_data)
 
     def delete_form(self, id, field, event, repeat_instance, **kwargs):
         """
@@ -411,7 +521,7 @@ class Redcapy:
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return self.__core_api_code__(post_data=post_data)
+        return self.__core_api_code(post_data=post_data)
 
     def import_file(self, record_id, field, event, filename, repeat_instance=None, **kwargs):
         """
@@ -479,7 +589,8 @@ class Redcapy:
             # TODO
             pass
 
-        # Normally this would be processed by the core method, but it is customized here due to the null response.
+        # Normally this would be processed by the core method, but it is customized here due to the null response
+        # that the server returns after a proper data import.
         buffer = BytesIO()
         c = pycurl.Curl()
         c.setopt(c.URL, self.redcap_url)
@@ -493,12 +604,13 @@ class Redcapy:
         if len(return_value) > 0:
             try:
                 return json.loads(return_value)
-            except Exception as e:
-                return_soup = BeautifulSoup(str(return_value), 'xml')
-                return return_soup.hash.error.get_text()
-            else:
-                print('return_value was not loaded as a JSON nor XML object:', return_value)
-                return return_value
+            except Exception as e:  # delete method on error returns xml
+                try:
+                    return_soup = BeautifulSoup(str(return_value), 'xml')
+                    return return_soup.hash.error.get_text()
+                except Exception as e2:
+                    print('Error: Data returned from Redcap was not a JSON nor XML object. Data: ', return_value)
+                    return return_value
         else:
             return True
 
