@@ -5,20 +5,22 @@
 
 This code contains several basic methods to access a Redcap 7/8 server instance using the Python API.  The Redcap API offers a broader array of features not implemented here.  It may be possible to add any other Redcap endpoint not available here by adapting the Python 2 examples in the API Playground and this library.
 
-It was originally tested with Redcap version 7.4.7 and Python 3.5.  Select methods have been tested on Redcap 8.1.3.  This library will not work with Python 2 in all likelihood.
+It was originally tested with Redcap version 7.4.7 and Python 3.5. This library will not work with Python 2.x in all likelihood.  (The Redcap API Playground provides code examples for Python 2)
 
-Only JSON output has been tested (not XML/CSV yet).
+Only JSON output has been implemented (not XML/CSV yet).
 
 A notebook containing a template for unit tests has been provided, which itself has not been tested recently.
 
-Currently, the following features are known to work in 8.1.3 and are being used in production code for a number of currently active NIH sponsored protocols:
+Currently, the following features are known to work in Redcap 8.5.9 and are being used for production code:
 - import records
 - import file
 - export records
 - delete record
+- export data dictionary
+- export survey link
 
 The following worked in 7.4.7 but have not been tested recently.  Similarly, the unit test notebook has not been recently updated.
-- export data dictionary
+
 - export events
 - delete form
 
@@ -35,6 +37,10 @@ redcap_url = os.environ['redcap server url']
 
 # Create a Redcap instance
 rc = Redcapy(api_token=redcap_token, redcap_url=redcap_url)
+
+# If needed, create a second Redcap instance, which would be useful for merging data from different projects
+redcap_token2 = os.environ['your other project token string']
+rc2 = Redcapy(api_token=redcap_token2, redcap_url=redcap_url)
 ```
 
 #### Export Records from Redcap
@@ -67,14 +73,33 @@ import_response = rc.import_file(event='data_import_arm_1',
 ```
 #### Delete Entire Record from Redcap
 ```python
-# This method is very convenient for development/testing, but use very carefully for production.
-# Delete all data for Record ID 30
+# This method is very convenient for development/testing, but use very carefully, if at all, for production.
+# Example: Delete all data for Record ID 30
 rc.delete_record(30)
 
-# Bulk delete: delete Record IDs 1-14.
+# Example of Bulk delete: delete Record IDs 1-14.
 [rc.delete_record(id) for id in range(1, 15)]
 ```
+#### Export Survey Link from Redcap
+```python
 
+# Example, Retrieve a single URL for the 2 Month survey for a given combination of instrument/event/record_id
+instrument_name = 'your raw instrument name'  # e.g., '2_month_survey'
+event_name = 'your raw event name'  # e.g., '2_month_arm_1'
+record_id = '101'
+url = rc.export_survey_link(instrument=instrument_name, event=event_name, record=record_id)
+
+print(url)
+# https://redcap.ucsf.edu/surveys/?s=abcdefghij
+
+```
+
+#### Export Data Dictionary from Redcap
+```python
+dd = rc.export_data_dictionary()  # returns a list of dicts, where each dict contains metadata for every field in the project
+dd_df = pd.DataFrame.from_records(dd)  # convert to a pandas DataFrame
+
+```
 
 
 
