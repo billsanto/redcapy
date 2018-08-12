@@ -191,9 +191,9 @@ class Redcapy:
 
             :param kwargs: Available options (check post_data for defaults)
                 token: {your instance token}
-                content: metadata
-                format: json/csv/xml
-                returnFormat: json/csv/xml
+                content: 'surveyLink' appears to be the only valid option
+                format: json/csv/xml CSV and XML not yet implemented
+                returnFormat: json/csv/xml CSV and XML not yet implemented
 
             :param instrument: Redcap instrument name
             :param event: Redcap event name
@@ -304,6 +304,8 @@ class Redcapy:
                     __core_api_code__ method
         """
 
+        # TODO Add handling of record filter, in the form of record[0], record[1], etc.
+        # TODO Add more defaults to method parameter list
         post_data = {
             'token': self.redcap_token,
             'content': 'record',
