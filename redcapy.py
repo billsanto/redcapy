@@ -1,27 +1,28 @@
 """
-    Redcapy.py interacts with more commonly used Redcap 8.1.3 API endpoints.
+    Redcapy.py interacts with more commonly used Redcap 8.5.x API endpoints.
 """
 
 import pycurl
 import json
 import re
+import requests
+import sys
 
 from io import BytesIO
 from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 
-__version__ = '0.9.5'
+__version__ = '0.9.6'
 __author__ = 'William Santo'
-__date__ = 'June 2018'
+__date__ = 'Aug 2018'
 
 
 class Redcapy:
-    def __init__(self, api_token, redcap_url, verify_ssl=False):
+    def __init__(self, api_token, redcap_url):
         self.redcap_token = api_token
         self.redcap_url = redcap_url
-        self.verify_ssl = verify_ssl
 
-    def __core_api_code(self, post_data, opt_post_data_kvpairs=None):
+    def __core_api_code(self, post_data, import_file=False, delete_file=False, opt_post_data_kvpairs=None):
         """
             Common code elements to access Redcap API
 
@@ -29,6 +30,9 @@ class Redcapy:
             :param opt_post_data_kvpairs:  Key value pairs to override POST data defaults.  Other
                     internal methods provide key checks for post fields; however, no such checks
                     are included if this override is used here.
+            :param import_file:  bool.  Set to True when the import_file method is being used (import_file
+                    and delete_file cannot both be True)
+            :param delete_file:  bool.  Set to True when the delete_file method is being used
 
             :return: JSON/XML/str containing either the expected output or an error message, depending
                     on the call.  Please check your Redcap documentation for any given method for
@@ -43,41 +47,60 @@ class Redcapy:
 
         assert isinstance(post_data, dict), "{} passed to core_api_code method \
             expected a dict but received a {} object".format(post_data, type(post_data))
-        
-        buffer = BytesIO()
-        c = pycurl.Curl()
-        c.setopt(c.URL, self.redcap_url)
-
-        if self.verify_ssl:
-            c.setopt(c.SSL_VERIFYPEER, 1)
-            c.setopt(c.SSL_VERIFYHOST, 2)
 
         if opt_post_data_kvpairs is not None:
             for key, value in opt_post_data_kvpairs.items():
                 post_data[key] = value
 
-        post_fields = urlencode(post_data)
-        c.setopt(c.POSTFIELDS, post_fields)
-        c.setopt(c.WRITEDATA, buffer)
-        c.perform()
-        c.close()
-        return_value = str(buffer.getvalue(), 'utf-8')  # convert byte to str object
-        buffer.close()
+        try:
+            if import_file:
+                files = {'file': open(post_data['file'], 'rb')}
+
+                r = requests.post(self.redcap_url, data=post_data, files=files)
+            else:
+                r = requests.post(self.redcap_url, data=post_data)
+
+            if r.status_code == 400 and json.loads(r.text)['error'] == 'There is no file to delete for this record':
+                print(json.loads(r.text)['error'])
+                return True
+            elif r.status_code != 200:
+                msg = 'Critical: Redcap server returned a {} status code. '.format(r.status_code)
+
+                try:
+                    return_soup = BeautifulSoup(str(r.text), 'xml')
+                    msg += 'Error received from Redcap: {}'.format(return_soup.hash.error.get_text())
+                except Exception as e:
+                    msg += 'Error received from Redcap: {}'.format(r.text)
+
+                print(msg)
+                # sys.exit(msg)
+                return False
+        except Exception as e:
+            msg = 'Critical: Unable to connect to Redcap server. Aborting execution.'
+            sys.exit(msg)
+
+        return_value = r.text
 
         # export_survey_link returns a URL as a str, so try this first
         if return_value and isinstance(return_value, str):
             if self.__find_url(return_value) == return_value:
                 return return_value
 
-        try:
-            return json.loads(return_value)
-        except Exception as e:  # delete method on error returns xml
+        if delete_file and len(return_value) == 0:
+            return True
+
+        if (len(return_value) > 0 and import_file) or not import_file:
             try:
-                return_soup = BeautifulSoup(str(return_value), 'xml')
-                return return_soup.hash.error.get_text()
-            except Exception as e2:
-                print('Error: Data returned from Redcap was not a JSON nor XML object. Data: ', return_value)
-                return return_value
+                return json.loads(return_value)
+            except Exception as e:  # delete method on error returns xml
+                try:
+                    return_soup = BeautifulSoup(str(return_value), 'xml')
+                    return return_soup.hash.error.get_text()
+                except Exception as e2:
+                    print('Error: Data returned from Redcap was not a JSON nor XML object. Data: ', return_value)
+                    return return_value
+        else:
+            return True
 
     def __api_error_handler(self, error_message):
         # TODO
@@ -555,7 +578,6 @@ class Redcapy:
 
             :return: None if successful, else potentially useful debugging info is returned
         """
-
         post_data = {
             'token': self.redcap_token,
             'content': 'file',
@@ -565,7 +587,7 @@ class Redcapy:
             'field': field,
             'event': event,
             'returnFormat': 'json',
-            'file': (pycurl.FORM_FILE, filename),
+            'file': filename,
         }
 
         if repeat_instance:
@@ -587,32 +609,48 @@ class Redcapy:
                 else:
                     print('{} is not a valid key'.format(key))
 
+            if 'action' in kwargs and kwargs['action'] in ['export', 'delete']:
+                post_data.pop('file')
+
         else:
             # TODO
             pass
 
-        # Normally this would be processed by the core method, but it is customized here due to the null response
-        # that the server returns after a proper data import.
-        buffer = BytesIO()
-        c = pycurl.Curl()
-        c.setopt(c.URL, self.redcap_url)
-        c.setopt(c.HTTPPOST, list(post_data.items()))
-        c.setopt(c.WRITEFUNCTION, buffer.write)
-        c.perform()
-        c.close()
-        return_value = str(buffer.getvalue(), 'utf-8')  # convert byte to str object
-        buffer.close()
-
-        if len(return_value) > 0:
-            try:
-                return json.loads(return_value)
-            except Exception as e:  # delete method on error returns xml
-                try:
-                    return_soup = BeautifulSoup(str(return_value), 'xml')
-                    return return_soup.hash.error.get_text()
-                except Exception as e2:
-                    print('Error: Data returned from Redcap was not a JSON nor XML object. Data: ', return_value)
-                    return return_value
+        if 'action' in kwargs and kwargs['action'] in ['delete']:
+            return self.__core_api_code(post_data=post_data, delete_file=True)
+        elif 'action' in kwargs and kwargs['action'] in ['export']:
+            print('File export method not yet implemented')
+            return False
+            # return self.__core_api_code(post_data=post_data)
         else:
-            return True
+            return self.__core_api_code(post_data=post_data, import_file=True)
 
+    def export_file(self, record_id, field, event, repeat_instance=None):
+        """
+            Identical to import file method, except for the action parameter, to export a file
+        """
+        pass  # TODO
+
+        # return self.import_file(record_id=record_id, field=field, event=event, filename=None,
+        #                         repeat_instance=repeat_instance, action='export')
+
+    def delete_file(self, record_id, field, event, repeat_instance=None):
+        """
+            Identical to import file method, except for the action parameter, to delete a file
+        """
+        return self.import_file(record_id=record_id, field=field, event=event, filename=None,
+                                repeat_instance=repeat_instance, action='delete')
+
+
+if __name__ == '__main__':
+    # Test code for import/delete
+    import os
+    from os.path import expanduser
+
+    file = os.path.join(expanduser('~'), 'dev/python/presentations/happy_tooth.jpg')
+
+    if os.path.exists(file):
+        rc = Redcapy(api_token=os.environ['REDCAP_API_CAPS_DEMO'], redcap_url=os.environ['REDCAP_URL'])
+        rc.import_file(record_id='1', field='exam_photo', event='6_month_arm_2', filename=file)
+        rc.delete_file(record_id='1', field='exam_photo', event='6_month_arm_2')
+        rc.import_file(record_id='1', field='exam_photo', event='6_month_arm_2', filename=file, action='delete')
