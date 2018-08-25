@@ -11,9 +11,10 @@ Only JSON output has been implemented (not XML/CSV yet).
 
 A notebook containing a template for unit tests has been provided, which itself has not been tested recently.
 
-Currently, the following features are known to work in Redcap 8.5.9 and are being used for production code:
+Currently, the following features are known to work in Redcap 8.5.11:
 - import records
 - import file
+- delete file
 - export records
 - delete record
 - export data dictionary
@@ -57,8 +58,8 @@ import pandas as pd
 
 # Import data, one record at a time from a pandas DataFrame
 df_to_upload = pd.DataFrame('Your Data')
-    for i in range(len(df_to_upload)):
-        record_to_upload = df_to_upload.iloc[i].to_json(orient='columns')
+    for i, row in df_to_upload.iterrows():
+        record_to_upload = row.to_json(orient='columns')
         import_return = rc.import_records(data_to_upload=record_to_upload)
 ```
 #### Import File to Redcap
@@ -69,6 +70,22 @@ import_response = rc.import_file(event='data_import_arm_1',
                                  filename='full_path_filename',
                                  record_id='1',
                                  repeat_instance='2',
+                                )
+```
+#### Delete File from Redcap
+```python
+# Delete the file imported above
+delete_response = rc.delete_file(event='data_import_arm_1',
+                                 field='redcap_field_name',
+                                 record_id='1',
+                                 repeat_instance='2',
+                                )
+# Or, add an action argument of 'delete' to the import_file method
+delete_response = rc.import_file(event='data_import_arm_1',
+                                 field='redcap_field_name',
+                                 record_id='1',
+                                 repeat_instance='2',
+                                 action='delete',
                                 )
 ```
 #### Delete Entire Record from Redcap
