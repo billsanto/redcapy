@@ -76,8 +76,9 @@ class Redcapy:
                 # sys.exit(msg)
                 return False
         except Exception as e:
-            msg = 'Critical: Unable to connect to Redcap server. Aborting execution.'
-            sys.exit(msg)
+            msg = 'Redcapy: Error received when connecting to Redcap using requests.post(). Error: {}'.format(e)
+            print(msg)
+            return False
 
         return_value = r.text
 
@@ -246,7 +247,9 @@ class Redcapy:
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return self.__core_api_code(post_data=post_data)
+        return_value = self.__core_api_code(post_data=post_data)
+
+        return return_value if return_value else ''
 
     def export_survey_participants(self, instrument, event, **kwargs):
         """
