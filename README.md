@@ -56,11 +56,54 @@ pprint(data_export)  # If successful, data_export is a list of dicts
 ```python
 import pandas as pd
 
+# Sample data
+data=[
+    {'record_id': '1', 'redcap_event_name': 'baseline_arm_1', 'consent_date': '2019-01-01'},
+    {'record_id': '2', 'redcap_event_name': 'baseline_arm_1', 'consent_date': '2019-01-02'}
+    ]
+
 # Import data, one record at a time from a pandas DataFrame
-df_to_upload = pd.DataFrame('Your Data')
-    for i, row in df_to_upload.iterrows():
-        record_to_upload = row.to_json(orient='columns')
-        import_return = rc.import_records(data_to_upload=record_to_upload)
+df_to_upload = pd.DataFrame(data)
+
+for i, row in df_to_upload.iterrows():
+    record_to_upload = row.to_json(orient='columns')
+    import_return = rc.import_records(data_to_upload=record_to_upload)
+
+
+# Import data, one record at a time, using a list of dicts instead
+import json
+
+for d in data:
+    record_to_upload = json.dumps(d)
+    import_return = rc.import_records(data_to_upload=record_to_upload)
+
+
+# Default behavior does not overwrite existing Redcap data with blank field values. Use overwriteBehavior='overwrite' to do so for each field being imported.
+# For example, say we want to reset the consent dates to blanks for testing purposes
+for d in data:
+    d['consent_date'] = ''
+    record_to_upload = json.dumps(d)
+    import_return = rc.import_records(data_to_upload=record_to_upload, overwriteBehavior='overwrite')
+
+
+# Add tracking to the import
+records_imported_attempted_count = 0
+records_imported_count = 0
+
+for d in data:
+    record_to_upload = json.dumps(d)
+    records_imported_attempted_count += 1
+    import_return = rc.import_records(data_to_upload=record_to_upload)
+
+    if 'count' in import_return and import_return['count'] == 1:
+        records_imported_count += 1
+
+print('Successfully imported {} of {} attempts'.format(records_imported_count, records_imported_attempted_count))
+
+
+# Bulk import of list of dicts (more than one record at a time)
+rc.import_records(data_to_upload=json.dumps(data))
+# returns {'count': 2} if successful
 ```
 #### Import File to Redcap
 ```python
@@ -90,7 +133,7 @@ delete_response = rc.import_file(event='data_import_arm_1',
 ```
 #### Delete Entire Record from Redcap
 ```python
-# This method is very convenient for development/testing, but use very carefully, if at all, for production.
+# This method is convenient for development/testing, but use very carefully, if at all, for production.
 # Example: Delete all data for Record ID 30
 rc.delete_record(30)
 
