@@ -2,19 +2,17 @@
     Redcapy.py interacts with more commonly used Redcap 8.5.x API endpoints.
 """
 
-import pycurl
 import json
 import re
 import requests
-import sys
+import time
 
-from io import BytesIO
-from urllib.parse import urlencode
 from bs4 import BeautifulSoup
+from collections import namedtuple
 
-__version__ = '0.9.6'
+__version__ = '0.9.8'
 __author__ = 'William Santo'
-__date__ = 'Aug 2018'
+__date__ = 'Feb 18, 2019'
 
 
 class Redcapy:
@@ -73,7 +71,7 @@ class Redcapy:
                     msg += 'Error received from Redcap: {}'.format(r.text)
 
                 print(msg)
-                # sys.exit(msg)
+
                 return False
         except Exception as e:
             msg = 'Redcapy: Error received when connecting to Redcap using requests.post(). Error: {}'.format(e)
@@ -107,6 +105,30 @@ class Redcapy:
         # TODO
         print('From __api_error_handler__ (this output may be expected in a unit test):', error_message)
 
+    def __recurse_core_api_code(self, post_data, limit=4, wait_secs=5):
+        """
+        Replace calling __core_api_code with this to repeat API export attempts recursively in the event of failure
+        :param post_data: String that had been formatted as a json object using json.dumps(), passed directly.
+        :param limit: int >= 1
+        :param wait_secs: int >= 0
+        :return: value returned from calling __core_api_code
+        """
+        rv = self.__core_api_code(post_data=post_data)
+
+        if rv:
+            return rv
+        elif limit > 1 and not rv:
+            limit -= 1
+            print('Waiting {} seconds before reattempt...'.format(wait_secs))
+            time.sleep(wait_secs)
+            remaining_attempts = limit - 1
+            print('Reattempting API connection. Up to {} attempt(s) remaining...'.format(remaining_attempts))
+
+            return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
+        else:
+            print('Redcapy: Unable to complete export from Redcap.  Abandoning...')
+            return rv
+
     @staticmethod
     def __find_url(str_to_parse):
         """
@@ -119,9 +141,30 @@ class Redcapy:
                               str_to_parse)
         return url_list[0] if len(url_list) > 0 else ''
 
-    def export_events(self, **kwargs):
+    def __check_args(self, limit, wait_secs):
+        """
+        Replace invalid args with new defaults
+        :param limit: int >= 1
+        :param wait_secs: int >= 0
+        :return: collections.namedtuple of limit and wait_secs
+        """
+
+        if (not isinstance(limit, int)) or (isinstance(limit, int) and limit < 1):
+            limit = 1
+        if (not isinstance(wait_secs, int)) or (isinstance(wait_secs, int) and wait_secs < 0):
+            wait_secs = 1
+
+        ARGS = namedtuple('ARGS', 'limit wait_secs')
+        rv = ARGS(limit=limit, wait_secs=wait_secs)
+
+        return rv
+
+    def export_events(self, limit=3, wait_secs=3, **kwargs):
         """
             Export events from Redcap
+
+            :param limit: int, >= 1, max number of recursive attempts
+            :param wait_secs: int, >= 0, number of secs to wait between API calls
 
             WARNING: Not all optional arguments have been tested.  Defaults are set in post_data.
 
@@ -141,6 +184,10 @@ class Redcapy:
         :return: JSON object containing either the expected output or an error message from __core_api_code__ method
         """
 
+        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        limit = checked_args.limit
+        wait_secs = checked_args.wait_secs
+
         post_data = {
             'token': self.redcap_token,
             'content': 'event',
@@ -157,11 +204,11 @@ class Redcapy:
                            'returnFormat']:         
                     post_data[key] = kwargs[key]    
                 else:
-                    print('{} is not a valid key'.format(key))          
+                    print('{} is not a valid key'.format(key))
 
-        return self.__core_api_code(post_data=post_data)
+        return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
-    def export_data_dictionary(self, **kwargs):
+    def export_data_dictionary(self, limit=3, wait_secs=3, **kwargs):
         """
             Export the data definitions.
 
@@ -169,6 +216,8 @@ class Redcapy:
                 replace the default POST options.
             Note that the format for returned data is the format field, not the returnFormat field.
 
+            :param limit: int, >= 1, max number of recursive attempts
+            :param wait_secs: int, >= 0, number of secs to wait between API calls
             :param kwargs: Available options (check post_data for defaults)
                 token: {your token}
                 content: metadata
@@ -183,6 +232,10 @@ class Redcapy:
             :return: JSON object containing either the expected output or an error message from
                     __core_api_code__ method
         """
+
+        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        limit = checked_args.limit
+        wait_secs = checked_args.wait_secs
 
         post_data = {
             'token': self.redcap_token,
@@ -201,11 +254,11 @@ class Redcapy:
                            'returnFormat']:         
                     post_data[key] = kwargs[key]    
                 else:
-                    print('{} is not a valid key'.format(key))            
+                    print('{} is not a valid key'.format(key))
 
-        return self.__core_api_code(post_data=post_data)
+        return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
-    def export_survey_link(self, instrument, event, record, **kwargs):
+    def export_survey_link(self, instrument, event, record, limit=3, wait_secs=3, **kwargs):
         """
             Export a survey link to a single survey based on required arguments.
 
@@ -213,19 +266,24 @@ class Redcapy:
                 replace the default POST options.
             Note that the format for returned data is the format field, not the returnFormat field.
 
+            :param instrument: Redcap instrument name
+            :param event: Redcap event name
+            :param record: record_id
+            :param limit: int, >= 1, max number of recursive attempts
+            :param wait_secs: int, >= 0, number of secs to wait between API calls
             :param kwargs: Available options (check post_data for defaults)
                 token: {your instance token}
                 content: 'surveyLink' appears to be the only valid option
                 format: json/csv/xml CSV and XML not yet implemented
                 returnFormat: json/csv/xml CSV and XML not yet implemented
 
-            :param instrument: Redcap instrument name
-            :param event: Redcap event name
-            :param record: record_id
-
             :return: JSON object containing either the expected output or an error message from
                     __core_api_code__ method
         """
+
+        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        limit = checked_args.limit
+        wait_secs = checked_args.wait_secs
 
         post_data = {
             'token': self.redcap_token,
@@ -247,11 +305,11 @@ class Redcapy:
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return_value = self.__core_api_code(post_data=post_data)
+        return_value = self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
         return return_value if return_value else ''
 
-    def export_survey_participants(self, instrument, event, **kwargs):
+    def export_survey_participants(self, instrument, event, limit=3, wait_secs=3, **kwargs):
         """
             Export full list of surveys for a combination of instrument and event
 
@@ -259,18 +317,23 @@ class Redcapy:
                 replace the default POST options.
             Note that the format for returned data is the format field, not the returnFormat field.
 
+            :param instrument: Redcap instrument name
+            :param event: Redcap event name
+            :param limit: int, >= 1, max number of recursive attempts
+            :param wait_secs: int, >= 0, number of secs to wait between API calls
             :param kwargs: Available options (check post_data for defaults)
                 token: {your instance token}
                 content: metadata
                 format: json/csv/xml
                 returnFormat: json/csv/xml
 
-            :param instrument: Redcap instrument name
-            :param event: Redcap event name
-
             :return: JSON object containing either the expected output or an error message from
                     __core_api_code__ method
         """
+
+        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        limit = checked_args.limit
+        wait_secs = checked_args.wait_secs
 
         post_data = {
             'token': self.redcap_token,
@@ -291,9 +354,9 @@ class Redcapy:
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return self.__core_api_code(post_data=post_data)
+        return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
-    def export_records(self, **kwargs):
+    def export_records(self, limit=3, wait_secs=10, **kwargs):
         """
             Export records (study data) from Redcap.
 
@@ -311,6 +374,8 @@ class Redcapy:
                 data_export = rc.export_records(rawOrLabel='label',
                                     fields='consent_date, randomization_id, record_id')
 
+            :param limit: int, >= 1, max number of recursive attempts
+            :param wait_secs: int, >= 0, number of secs to wait between API calls
             :param kwargs: Available options
                 token: {your token}
                 content: record
@@ -329,6 +394,10 @@ class Redcapy:
             :return JSON object containing either the expected output or an error message from
                     __core_api_code__ method
         """
+
+        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        limit = checked_args.limit
+        wait_secs = checked_args.wait_secs
 
         # TODO Add handling of record filter, in the form of record[0], record[1], etc.
         # TODO Add more defaults to method parameter list
@@ -362,9 +431,9 @@ class Redcapy:
                            'returnFormat']:         
                     post_data[key] = kwargs[key]    
                 else:
-                    print('{} is not a valid key'.format(key))                    
-            
-        return self.__core_api_code(post_data=post_data)
+                    print('{} is not a valid key'.format(key))
+
+        return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
     def import_records(self, data_to_upload, **kwargs):
         """
