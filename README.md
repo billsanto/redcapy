@@ -150,30 +150,29 @@ url = rc.export_survey_link(instrument=instrument_name, event=event_name, record
 
 print(url)
 # https://redcap.ucsf.edu/surveys/?s=abcdefghij
-
 ```
 
 #### Export Data Dictionary from Redcap
 ```python
 dd = rc.export_data_dictionary()  # returns a list of dicts, where each dict contains metadata for every field in the project
 dd_df = pd.DataFrame.from_records(dd)  # convert to a pandas DataFrame
-
 ```
 
 #### Export Records and Data Dictionary from Redcap using customized number of attempts
 
-By default, all export methods will conduct multiple attempts as needed to retrieve data.  This is useful because a Redcap server may reject a valid export request due to excessive contention for server resources, for example.  You can change the defaults by specifying a limit to the number of reattempts and/or the number of seconds to wait between attempts.  Defaults may vary by export method and may change in the future, so specify an appropriate limit for your situation.
+By default, all export methods will conduct multiple attempts as needed to retrieve data.  This is useful because a Redcap server may reject a valid export request for various reasons.  For example, a common error encountered when performing multiple exports with large amounts of data is: 'Connection broken: OSError("(54, \'ECONNRESET\')",)'.
+
+You can change the defaults by specifying a limit to the number of reattempts and/or the number of seconds to wait between attempts.  Defaults may vary by export method and may change in the future, so specify an appropriate limit for your situation.
 ```python
 export_fields = ['record_id', 'redcap_event_name', 'consent_date', 'randomization_date']
 
-rc_visit_raw = export_records(limit=3, wait_secs=5, fields=export_fields)  # up to 3 attempts, waiting 5 secs before reattempt
-rc_visit_label = export_records(limit=5, wait_secs=10, fields=export_fields)  # up to 5 attempts, waiting 10 secs before reattempt
+rc_visit_raw = export_records(limit=3, wait_secs=5, fields=export_fields)  # up to 3 attempts, waiting 5 secs before each reattempt
+rc_visit_label = export_records(limit=5, wait_secs=10, fields=export_fields)  # up to 5 attempts, waiting 10 secs before each reattempt
 rc_visit_dd = export_data_dictionary(limit=10, wait_secs=5)  # up to 10 attempts, waiting 5 secs before reattempt
 
 if (not rc_visit_raw) or (not rc_visit_label) or (not rc_visit_dd):
     msg = 'Error: Failed to export data from Redcap.'
     raise ValueError(msg)
-
 ```
 
 
