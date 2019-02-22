@@ -11,7 +11,7 @@ Only JSON output has been implemented (not XML/CSV yet).
 
 A notebook containing a template for unit tests has been provided, which itself has not been tested recently.
 
-Currently, the following features are known to work in Redcap 8.5.11:
+Currently, the following features are known to work in Redcap 8.10.6:
 - import records
 - import file
 - delete file
@@ -24,7 +24,6 @@ The following worked in 7.4.7 but have not been tested recently.  Similarly, the
 
 - export events
 - delete form
-
 
 ### Examples
 #### Set up
@@ -161,6 +160,21 @@ dd_df = pd.DataFrame.from_records(dd)  # convert to a pandas DataFrame
 
 ```
 
+#### Export Records and Data Dictionary from Redcap using customized number of attempts
+
+By default, all export methods will conduct multiple attempts as needed to retrieve data.  This is useful because a Redcap server may reject a valid export request due to excessive contention for server resources, for example.  You can change the defaults by specifying a limit to the number of reattempts and/or the number of seconds to wait between attempts.  Defaults may vary by export method and may change in the future, so specify an appropriate limit for your situation.
+```python
+export_fields = ['record_id', 'redcap_event_name', 'consent_date', 'randomization_date']
+
+rc_visit_raw = export_records(limit=3, wait_secs=5, fields=export_fields)  # up to 3 attempts, waiting 5 secs before reattempt
+rc_visit_label = export_records(limit=5, wait_secs=10, fields=export_fields)  # up to 5 attempts, waiting 10 secs before reattempt
+rc_visit_dd = export_data_dictionary(limit=10, wait_secs=5)  # up to 10 attempts, waiting 5 secs before reattempt
+
+if (not rc_visit_raw) or (not rc_visit_label) or (not rc_visit_dd):
+    msg = 'Error: Failed to export data from Redcap.'
+    raise ValueError(msg)
+
+```
 
 
 
