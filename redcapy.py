@@ -1,24 +1,47 @@
 """
-    Redcapy.py interacts with more commonly used Redcap 8.5.x API endpoints.
+    Redcapy.py interacts with more commonly used Redcap 8.5.x API endpoints.  Tested with Python 3.5/6
 """
 
 import json
 import re
 import requests
 import time
+import sys
 
 from bs4 import BeautifulSoup
 from collections import namedtuple
 
-__version__ = '0.9.8'
 __author__ = 'William Santo'
-__date__ = 'Feb 18, 2019'
+__date__ = 'Jun 2, 2019'
 
 
 class Redcapy:
     def __init__(self, api_token, redcap_url):
         self.redcap_token = api_token
         self.redcap_url = redcap_url
+
+        if not self.redcap_token:
+            msg = 'Must provide token to initialize Redcapy'
+            sys.exit(msg)
+        if not self.__validate_url(self.redcap_url):
+            msg = 'Invalid URL format detected for \"{}\" when initializing Redcapy.'.format(self.redcap_url)
+            sys.exit(msg)
+
+    def __str__(self):
+        # Number of actual characters to show when calling str on object
+        begin_show_chars = 3
+        end_show_chars = 2
+
+        truncated_token = self.redcap_token[:begin_show_chars] \
+                          + '*' * (len(self.redcap_token) - begin_show_chars - end_show_chars) \
+                          + self.redcap_token[-(end_show_chars):]
+
+        return 'Redcapy instance connected to {} with token {}'.format(self.redcap_url, truncated_token)
+
+    def __repr__(self):
+        kvs = ['\t' + tup[0] + ': ' + tup[1] for tup in sorted(self.__dict__.items(), key=lambda x: x[0])]
+
+        return 'Redcapy instance:\n{}'.format('\n'.join(kvs))
 
     def __core_api_code(self, post_data, import_file=False, delete_file=False, opt_post_data_kvpairs=None):
         """
@@ -140,6 +163,10 @@ class Redcapy:
         url_list = re.findall('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]| [! * \(\),] | (?: %[0-9a-fA-F][0-9a-fA-F]))+',
                               str_to_parse)
         return url_list[0] if len(url_list) > 0 else ''
+
+    def __validate_url(self, url_to_check):
+        return True if isinstance(url_to_check, str) and self.__find_url(url_to_check).strip() == url_to_check.strip() \
+            else False
 
     def __check_args(self, limit, wait_secs):
         """
@@ -715,14 +742,23 @@ class Redcapy:
 
 
 if __name__ == '__main__':
-    # Test code for import/delete
+    # Example usage shown below. Modify or delete as needed.
     import os
     from os.path import expanduser
+
+    rc = Redcapy(api_token=os.environ['REDCAP_API_CAPS_DEMO'], redcap_url=os.environ['REDCAP_URL'])
 
     file = os.path.join(expanduser('~'), 'dev/python/presentations/happy_tooth.jpg')
 
     if os.path.exists(file):
-        rc = Redcapy(api_token=os.environ['REDCAP_API_CAPS_DEMO'], redcap_url=os.environ['REDCAP_URL'])
         rc.import_file(record_id='1', field='exam_photo', event='6_month_arm_2', filename=file)
         rc.delete_file(record_id='1', field='exam_photo', event='6_month_arm_2')
-        rc.import_file(record_id='1', field='exam_photo', event='6_month_arm_2', filename=file, action='delete')
+        return_code = rc.import_file(record_id='1', field='exam_photo', event='6_month_arm_2',
+                                     filename=file, action='delete')
+
+        print(return_code)
+    else:
+        print('No file found')
+
+    # print(repr(rc))  # Uncommenting this line will reveal full token
+    print(rc)  # print URL and masked token
