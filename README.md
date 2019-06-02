@@ -11,7 +11,7 @@ Only JSON output has been implemented (not XML/CSV yet).
 
 A notebook containing a template for unit tests has been provided, which itself has not been tested recently.
 
-Currently, the following features are known to work in Redcap 8.10.6:
+Currently, the following features are known to work in Redcap 8.10.15:
 - import records
 - import file
 - delete file
@@ -37,6 +37,9 @@ redcap_url = os.environ['redcap server url']
 
 # Create a Redcap instance
 rc = Redcapy(api_token=redcap_token, redcap_url=redcap_url)
+
+# Examine attributes of instance: 
+print(rc)  # Example: Redcapy instance connected to https://redcap.ucsf.edu/api/ with token 9A3***************************10
 
 # If needed, create a second Redcap instance, which would be useful for merging data from different projects
 redcap_token2 = os.environ['your other project token string']
