@@ -16,16 +16,16 @@ __date__ = 'Jun 2, 2019'
 
 
 class Redcapy:
-    def __init__(self, api_token, redcap_url):
+    def __init__(self, api_token: str, redcap_url: str) -> None:
         self.redcap_token = api_token
         self.redcap_url = redcap_url
 
         if not self.redcap_token:
-            msg = 'Must provide token to initialize Redcapy'
-            sys.exit(msg)
+            msg = 'Must provide token to initialize Redcapy instance'
+            raise ValueError(msg)
         if not self.__validate_url(self.redcap_url):
-            msg = 'Invalid URL format detected for \"{}\" when initializing Redcapy.'.format(self.redcap_url)
-            sys.exit(msg)
+            msg = 'Invalid URL format detected for \"{}\" when initializing Redcapy instance'.format(self.redcap_url)
+            raise ValueError(msg)
 
     def __str__(self):
         # Number of actual characters to show when calling str on object
@@ -165,8 +165,8 @@ class Redcapy:
         return url_list[0] if len(url_list) > 0 else ''
 
     def __validate_url(self, url_to_check):
-        return True if isinstance(url_to_check, str) and self.__find_url(url_to_check).strip() == url_to_check.strip() \
-            else False
+        return True if isinstance(url_to_check, str) and url_to_check \
+                       and self.__find_url(url_to_check).strip() == url_to_check.strip() else False
 
     def __check_args(self, limit, wait_secs):
         """
@@ -762,3 +762,6 @@ if __name__ == '__main__':
 
     # print(repr(rc))  # Uncommenting this line will reveal full token
     print(rc)  # print URL and masked token
+
+    rc = Redcapy(api_token=os.environ['REDCAP_API_CAPS_DEMO'], redcap_url='')
+    print(rc)
