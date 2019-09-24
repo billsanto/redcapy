@@ -1,49 +1,115 @@
 """
-    Redcapy.py interacts with more commonly used Redcap 8.5.x API endpoints.  Tested with Python 3.5/6
+    Redcapy.py interacts with more commonly used Redcap 8.5.x/9.0 API endpoints.  Tested with Python 3.6/7
+
+    Note that the methods using self._core_api_code may return False to other instance methods
+    in the event of a connection failure, in lieu of an expected response.
 """
 
+import attr
 import json
 import re
 import requests
 import time
-import sys
 
 from bs4 import BeautifulSoup
 from collections import namedtuple
+from functools import wraps
+from validator_collection import checkers
 
-__author__ = 'William Santo'
-__date__ = 'Jun 2, 2019'
-
-
+@attr.s
 class Redcapy:
-    def __init__(self, api_token: str, redcap_url: str) -> None:
-        self.redcap_token = api_token
-        self.redcap_url = redcap_url
+    # Instance vars
+    api_token = attr.ib(validator=attr.validators.instance_of(str))
+    _redcap_token = ''  # later copies api_token value as private var
+    redcap_url = attr.ib(validator=attr.validators.instance_of(str))
+    last_status_code = ''
+    last_response = ''
+    retry_keys = ['limit', 'wait_secs', 'backoff', 'logger']  # Used by retry decorator
 
-        if not self.redcap_token:
-            msg = 'Must provide token to initialize Redcapy instance'
-            raise ValueError(msg)
-        if not self.__validate_url(self.redcap_url):
+    @api_token.validator
+    def check_and_mask_token(self, attribute, value):
+        if not self.api_token:
+            raise ValueError('Must provide token to initialize Redcapy instance')
+        else:
+            begin_show_chars = 3
+            end_show_chars = 2
+
+            # Swap tokens such that api_token is masked when revealed with __repr__ and using
+            # instead private attribute _redcap_token as the actual token
+            self._redcap_token = self.api_token
+            self.api_token = (self._redcap_token[:begin_show_chars] + '***...***'
+                              + self._redcap_token[-end_show_chars:])
+
+    @redcap_url.validator
+    def check_url(self, attribute, value):
+        if not checkers.is_url(self.redcap_url):
             msg = 'Invalid URL format detected for \"{}\" when initializing Redcapy instance'.format(self.redcap_url)
             raise ValueError(msg)
 
-    def __str__(self):
-        # Number of actual characters to show when calling str on object
-        begin_show_chars = 3
-        end_show_chars = 2
+    def __call__(self, *args, **kwargs):
+        return self
 
-        truncated_token = self.redcap_token[:begin_show_chars] \
-                          + '*' * (len(self.redcap_token) - begin_show_chars - end_show_chars) \
-                          + self.redcap_token[-(end_show_chars):]
+    class _Decorators:
+        @classmethod
+        def retry(cls, exceptions, limit=4, wait_secs=3, backoff=2, logger=None):
+            """
+                Retry calling the decorated function using an exponential backoff.
 
-        return 'Redcapy instance connected to {} with token {}'.format(self.redcap_url, truncated_token)
+                Ref: Adapted from https://www.calazan.com/retry-decorator-for-python-3/
+                    and https://medium.com/@vadimpushtaev/decorator-inside-python-class-1e74d23107f6
+                    and https://stackoverflow.com/a/19447502
 
-    def __repr__(self):
-        kvs = ['\t' + tup[0] + ': ' + tup[1] for tup in sorted(self.__dict__.items(), key=lambda x: x[0])]
+                :param exceptions: The exception to check. may be a tuple of exceptions to check.
+                :param limit: Number of times to try (not retry) before giving up.
+                :param wait_secs: Initial delay between retries in seconds.
+                :param backoff: Backoff multiplier (e.g. value of 2 will double the delay each retry).
+                :param logger: Logger to use. If None, print.
+            """
 
-        return 'Redcapy instance:\n{}'.format('\n'.join(kvs))
+            # Outer function retry is a wrapper for the inner decorator
+            def deco_retry(f):
+                @wraps(f)
+                def f_retry_wrapper(other_self, **kwargs):
+                    # mtries, mdelay = tries, delay
+                    post_data = kwargs.get('post_data', {})
+                    import_file = kwargs.get('import_file', False)
+                    delete_file = kwargs.get('delete_file', False)
+                    opt_post_data_kvpairs = kwargs.get('opt_post_data_kvpairs', None)
 
-    def __core_api_code(self, post_data, import_file=False, delete_file=False, opt_post_data_kvpairs=None):
+                    mtries = kwargs.get('limit', limit)
+                    mdelay = kwargs.get('wait_secs', wait_secs)
+                    # mbackoff = kwargs.get('backoff', backoff)
+
+                    while mtries > 1:
+                        try:
+                            print('Attempting API connection...')
+                            rv = f(other_self, post_data=post_data, import_file=import_file, delete_file=delete_file,
+                                   opt_post_data_kvpairs=opt_post_data_kvpairs, limit=mtries, wait_secs=mdelay)
+
+                            if isinstance(rv, bool) and not rv:
+                                raise Exception
+
+                            return rv
+                        except (exceptions, Exception):
+                            mtries -= 1
+
+                            msg = 'Up to {} attempt(s) remaining. Retrying in {} seconds...'.format(mtries, mdelay)
+                            print(msg)
+
+                            if logger:
+                                logger.warning(msg)
+
+                            time.sleep(mdelay)
+                            mdelay *= backoff
+
+                    return f(other_self, post_data=post_data, import_file=import_file, delete_file=delete_file,
+                             opt_post_data_kvpairs=opt_post_data_kvpairs, limit=mtries, wait_secs=mdelay)
+                return f_retry_wrapper
+            return deco_retry
+            print('Completed API connection attempt')
+
+    @_Decorators.retry(Exception)
+    def _core_api_code(self, post_data, import_file=False, delete_file=False, opt_post_data_kvpairs=None, **kwargs):
         """
             Common code elements to access Redcap API
 
@@ -55,13 +121,16 @@ class Redcapy:
                     and delete_file cannot both be True)
             :param delete_file:  bool.  Set to True when the delete_file method is being used
 
-            :return: JSON/XML/str containing either the expected output or an error message, depending
-                    on the call.  Please check your Redcap documentation for any given method for
-                    further details.
+            :return: One of several types, depending on the call. Check Redcap documentation for any given method.
+                    Returns JSON containing either the expected output or an error message for most calls.
+                    Returns False when error encountered
+                    Returns True after successfully deleting a file
+                    Returns str after exporting a survey URL
 
-            WARNING: TODO: Code has only been tested to return JSON responses from server.  Additional
-                work may be required to accommodate specification of xml or csv responses.
+            WARNING: Code has only been tested to return JSON responses from server. CSV or XML not yet supported.
         """
+        self.last_status_code = ''
+        self.last_response = ''
 
         if opt_post_data_kvpairs is None:
             opt_post_data_kvpairs = {}
@@ -79,7 +148,12 @@ class Redcapy:
 
                 r = requests.post(self.redcap_url, data=post_data, files=files)
             else:
-                r = requests.post(self.redcap_url, data=post_data)
+                # Added 'identity' value to override default use of gzip and deflate, which can cause requests module
+                # to fail in the apparent presence of improper data in the Redcap project.
+                r = requests.post(self.redcap_url, data=post_data, headers={'Accept-Encoding': 'identity'})
+
+            self.last_status_code = r.status_code
+            self.last_response = r
 
             if r.status_code == 400 and json.loads(r.text)['error'] == 'There is no file to delete for this record':
                 print(json.loads(r.text)['error'])
@@ -105,7 +179,7 @@ class Redcapy:
 
         # export_survey_link returns a URL as a str, so try this first
         if return_value and isinstance(return_value, str):
-            if self.__find_url(return_value) == return_value:
+            if self._find_url(return_value) == return_value:
                 return return_value
 
         if delete_file and len(return_value) == 0:
@@ -124,53 +198,26 @@ class Redcapy:
         else:
             return True
 
-    def __api_error_handler(self, error_message):
+    def _api_error_handler(self, error_message):
         # TODO
         print('From __api_error_handler__ (this output may be expected in a unit test):', error_message)
 
-    def __recurse_core_api_code(self, post_data, limit=4, wait_secs=5):
-        """
-        Replace calling __core_api_code with this to repeat API export attempts recursively in the event of failure
-        :param post_data: String that had been formatted as a json object using json.dumps(), passed directly.
-        :param limit: int >= 1
-        :param wait_secs: int >= 0
-        :return: value returned from calling __core_api_code
-        """
-        rv = self.__core_api_code(post_data=post_data)
-
-        if rv:
-            return rv
-        elif limit > 1 and not rv:
-            limit -= 1
-            print('Waiting {} seconds before reattempt...'.format(wait_secs))
-            time.sleep(wait_secs)
-            remaining_attempts = limit - 1
-            print('Reattempting API connection. Up to {} attempt(s) remaining...'.format(remaining_attempts))
-
-            return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
-        else:
-            print('Redcapy: Unable to complete export from Redcap.  Abandoning...')
-            return rv
-
     @staticmethod
-    def __find_url(str_to_parse):
+    def _find_url(str_to_parse):
         """
             Ref: https://www.geeksforgeeks.org/python-check-url-string/
-        :param string:
+        :param str_to_parse: str
         :return: str, URL of the first URL found in the supplied str argument
         """
 
-        url_list = re.findall('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]| [! * \(\),] | (?: %[0-9a-fA-F][0-9a-fA-F]))+',
+        url_list = re.findall('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]| [! *(),] | (?: %[0-9a-fA-F][0-9a-fA-F]))+',
+
                               str_to_parse)
         return url_list[0] if len(url_list) > 0 else ''
 
-    def __validate_url(self, url_to_check):
-        return True if isinstance(url_to_check, str) and url_to_check \
-                       and self.__find_url(url_to_check).strip() == url_to_check.strip() else False
-
-    def __check_args(self, limit, wait_secs):
+    def _check_args(self, limit, wait_secs):
         """
-        Replace invalid args with new defaults
+        Check and replace invalid args passed to instance methods with new defaults
         :param limit: int >= 1
         :param wait_secs: int >= 0
         :return: collections.namedtuple of limit and wait_secs
@@ -211,12 +258,12 @@ class Redcapy:
         :return: JSON object containing either the expected output or an error message from __core_api_code__ method
         """
 
-        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        checked_args = self._check_args(limit=limit, wait_secs=wait_secs)
         limit = checked_args.limit
         wait_secs = checked_args.wait_secs
 
         post_data = {
-            'token': self.redcap_token,
+            'token': self._redcap_token,
             'content': 'event',
             'format': 'json',
             'returnFormat': 'json'
@@ -228,12 +275,12 @@ class Redcapy:
                            'content',
                            'format',
                            'arms',
-                           'returnFormat']:         
+                           'returnFormat'] + self.retry_keys:
                     post_data[key] = kwargs[key]    
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
+        return self._core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
     def export_data_dictionary(self, limit=3, wait_secs=3, **kwargs):
         """
@@ -260,12 +307,12 @@ class Redcapy:
                     __core_api_code__ method
         """
 
-        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        checked_args = self._check_args(limit=limit, wait_secs=wait_secs)
         limit = checked_args.limit
         wait_secs = checked_args.wait_secs
 
         post_data = {
-            'token': self.redcap_token,
+            'token': self._redcap_token,
             'content': 'metadata',
             'format': 'json',
             'returnFormat': 'json'
@@ -278,12 +325,12 @@ class Redcapy:
                            'format',
                            'fields',
                            'forms',
-                           'returnFormat']:         
+                           'returnFormat'] + self.retry_keys:
                     post_data[key] = kwargs[key]    
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
+        return self._core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
     def export_survey_link(self, instrument, event, record, limit=3, wait_secs=3, **kwargs):
         """
@@ -308,12 +355,12 @@ class Redcapy:
                     __core_api_code__ method
         """
 
-        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        checked_args = self._check_args(limit=limit, wait_secs=wait_secs)
         limit = checked_args.limit
         wait_secs = checked_args.wait_secs
 
         post_data = {
-            'token': self.redcap_token,
+            'token': self._redcap_token,
             'content': 'surveyLink',
             'format': 'json',
             'instrument': instrument,
@@ -327,12 +374,12 @@ class Redcapy:
                 if key in ['token',
                            'content',
                            'format',
-                           'returnFormat']:
+                           'returnFormat'] + self.retry_keys:
                     post_data[key] = kwargs[key]
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return_value = self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
+        return_value = self._core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
         return return_value if return_value else ''
 
@@ -358,12 +405,12 @@ class Redcapy:
                     __core_api_code__ method
         """
 
-        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        checked_args = self._check_args(limit=limit, wait_secs=wait_secs)
         limit = checked_args.limit
         wait_secs = checked_args.wait_secs
 
         post_data = {
-            'token': self.redcap_token,
+            'token': self._redcap_token,
             'content': 'participantList',
             'format': 'json',
             'instrument': instrument,
@@ -376,14 +423,14 @@ class Redcapy:
                 if key in ['token',
                            'content',
                            'format',
-                           'returnFormat']:
+                           'returnFormat'] + self.retry_keys:
                     post_data[key] = kwargs[key]
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
+        return self._core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
-    def export_records(self, limit=3, wait_secs=10, **kwargs):
+    def export_records(self, limit=5, wait_secs=3, **kwargs):
         """
             Export records (study data) from Redcap.
 
@@ -419,17 +466,17 @@ class Redcapy:
                 events: string (Comma separated as a single string, not list, if multiple)
 
             :return JSON object containing either the expected output or an error message from
-                    __core_api_code__ method
+                    __core_api_code__ method, or False if self._core_api_code fails
         """
 
-        checked_args = self.__check_args(limit=limit, wait_secs=wait_secs)
+        checked_args = self._check_args(limit=limit, wait_secs=wait_secs)
         limit = checked_args.limit
         wait_secs = checked_args.wait_secs
 
         # TODO Add handling of record filter, in the form of record[0], record[1], etc.
         # TODO Add more defaults to method parameter list
         post_data = {
-            'token': self.redcap_token,
+            'token': self._redcap_token,
             'content': 'record',
             'format': 'json',
             'type': 'flat',
@@ -445,7 +492,8 @@ class Redcapy:
             for key, value in kwargs.items():
                 if key in ['fields', 
                            'forms', 
-                           'events', 
+                           'events',
+                           'records',
                            'token',
                            'content',
                            'format',
@@ -455,12 +503,12 @@ class Redcapy:
                            'exportCheckboxLabel',
                            'exportSurveyFields',
                            'exportDataAccessGroups',
-                           'returnFormat']:         
-                    post_data[key] = kwargs[key]    
+                           'returnFormat'] + self.retry_keys:
+                    post_data[key] = kwargs[key]
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return self.__recurse_core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
+        return self._core_api_code(post_data=post_data, limit=limit, wait_secs=wait_secs)
 
     def import_records(self, data_to_upload, **kwargs):
         """
@@ -519,7 +567,7 @@ class Redcapy:
         """
 
         post_data = {
-            'token': self.redcap_token,
+            'token': self._redcap_token,
             'content': 'record',
             'format': 'json',
             'type': 'flat',
@@ -540,7 +588,7 @@ class Redcapy:
                            'data',
                            'dateFormat',
                            'returnContent',
-                           'returnFormat']:         
+                           'returnFormat'] + self.retry_keys:
                     post_data[key] = kwargs[key]    
                 else:
                     print('{} is not a valid key'.format(key))
@@ -558,7 +606,7 @@ class Redcapy:
             # TODO
             pass
 
-        return self.__core_api_code(post_data=post_data)
+        return self._core_api_code(post_data=post_data)
 
     def delete_record(self, id_to_delete, **kwargs):
         """
@@ -581,7 +629,7 @@ class Redcapy:
         """
 
         post_data = {
-            'token': self.redcap_token,
+            'token': self._redcap_token,
             'action': 'delete',
             'content': 'record',
             'records[0]': id_to_delete
@@ -592,12 +640,12 @@ class Redcapy:
                 if key in ['token',
                            'content',
                            'records[0]',
-                           'arm']:         
+                           'arm'] + self.retry_keys:
                     post_data[key] = kwargs[key]    
                 else:
                     print('{} is not a valid key'.format(key))        
 
-        return self.__core_api_code(post_data=post_data)
+        return self._core_api_code(post_data=post_data)
 
     def delete_form(self, id, field, event, repeat_instance, **kwargs):
         """
@@ -622,7 +670,7 @@ class Redcapy:
         """
 
         post_data = {
-            'token': self.redcap_token,
+            'token': self._redcap_token,
             'content': 'file',
             'action': 'delete',
             'record': id,
@@ -640,12 +688,12 @@ class Redcapy:
                            'field',
                            'event',
                            'repeat_instance'
-                           ]:
+                           ] + self.retry_keys:
                     post_data[key] = kwargs[key]
                 else:
                     print('{} is not a valid key'.format(key))
 
-        return self.__core_api_code(post_data=post_data)
+        return self._core_api_code(post_data=post_data)
 
     def import_file(self, record_id, field, event, filename, repeat_instance=None, **kwargs):
         """
@@ -678,7 +726,7 @@ class Redcapy:
             :return: None if successful, else potentially useful debugging info is returned
         """
         post_data = {
-            'token': self.redcap_token,
+            'token': self._redcap_token,
             'content': 'file',
             'format': 'json',
             'action': 'import',
@@ -703,7 +751,7 @@ class Redcapy:
                            'event',
                            'returnContent',
                            'file',
-                           ]:
+                           ] + self.retry_keys:
                     post_data[key] = str(kwargs[key])
                 else:
                     print('{} is not a valid key'.format(key))
@@ -716,13 +764,12 @@ class Redcapy:
             pass
 
         if 'action' in kwargs and kwargs['action'] in ['delete']:
-            return self.__core_api_code(post_data=post_data, delete_file=True)
+            return self._core_api_code(post_data=post_data, delete_file=True)
         elif 'action' in kwargs and kwargs['action'] in ['export']:
             print('File export method not yet implemented')
             return False
-            # return self.__core_api_code(post_data=post_data)
         else:
-            return self.__core_api_code(post_data=post_data, import_file=True)
+            return self._core_api_code(post_data=post_data, import_file=True)
 
     def export_file(self, record_id, field, event, repeat_instance=None):
         """
@@ -742,26 +789,31 @@ class Redcapy:
 
 
 if __name__ == '__main__':
-    # Example usage shown below. Modify or delete as needed.
+    """
+        Sample usage below using command line args for Redcap tokens.
+    """
     import os
-    from os.path import expanduser
+    import sys
+    from pprint import pprint
 
-    rc = Redcapy(api_token=os.environ['REDCAP_API_CAPS_DEMO'], redcap_url=os.environ['REDCAP_URL'])
+    def export_from_redcap(rc_instance, **kwargs):
+        response = rc_instance.export_records(**kwargs)
 
-    file = os.path.join(expanduser('~'), 'dev/python/presentations/happy_tooth.jpg')
+        if response and 'error' not in response:
+            return response
+        else:
+            export_msg = 'Failed to export records from Redcap for {}.  Server returned: {}'.format(response)
+            print(export_msg)
 
-    if os.path.exists(file):
-        rc.import_file(record_id='1', field='exam_photo', event='6_month_arm_2', filename=file)
-        rc.delete_file(record_id='1', field='exam_photo', event='6_month_arm_2')
-        return_code = rc.import_file(record_id='1', field='exam_photo', event='6_month_arm_2',
-                                     filename=file, action='delete')
+    if sys.argv[1] and sys.argv[2]:
+        try:
+            redcap_url = os.environ[sys.argv[1]]
+            redcap_token = os.environ[sys.argv[2]]
 
-        print(return_code)
-    else:
-        print('No file found')
+            # Redcap instance
+            rc = Redcapy(api_token=redcap_token, redcap_url=redcap_url)
 
-    # print(repr(rc))  # Uncommenting this line will reveal full token
-    print(rc)  # print URL and masked token
-
-    rc = Redcapy(api_token=os.environ['REDCAP_API_CAPS_DEMO'], redcap_url='')
-    print(rc)
+            rc_export_raw = export_from_redcap(rc_instance=rc, rawOrLabel='raw')
+            pprint(rc_export_raw[0])
+        except Exception as e:
+            print('Unable to export records from Redcap using provided credentials')
