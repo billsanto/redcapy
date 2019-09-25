@@ -3,15 +3,11 @@
 ----
 ### Overview
 
-This code contains several basic methods to access a Redcap 7/8 server instance using the Python API.  The Redcap API offers a broader array of features not implemented here.  It may be possible to add any other Redcap endpoint not available here by adapting the Python 2 examples in the API Playground and this library.
+This code contains several basic methods to access a Redcap 7/8/9 server instance using the Python API.  The Redcap API offers a broader array of features not implemented here.  It may be possible to add any other Redcap endpoint not available here by adapting the Python 2 examples in the API Playground and this library.
 
-It was originally tested with Redcap version 7.4.7 and Python 3.5. This library will not work with Python 2.x in all likelihood.  (The Redcap API Playground provides code examples for Python 2)
+Only JSON output has been implemented (no XML/CSV to date). Note that for some endpoints Redcap may produce XML. Read the Redcapy method of interest for details.
 
-Only JSON output has been implemented (not XML/CSV yet).
-
-A notebook containing a template for unit tests has been provided, which itself has not been tested recently.
-
-Currently, the following features are known to work in Redcap 8.10.15:
+Currently, the following features are known to work in Redcap 9.0.
 - import records
 - import file
 - delete file
@@ -19,10 +15,10 @@ Currently, the following features are known to work in Redcap 8.10.15:
 - delete record
 - export data dictionary
 - export survey link
+- export events
 
 The following worked in 7.4.7 but have not been tested recently.  Similarly, the unit test notebook has not been recently updated.
 
-- export events
 - delete form
 
 ### Examples
@@ -46,7 +42,7 @@ redcap_token2 = os.environ['your other project token string']
 rc2 = Redcapy(api_token=redcap_token2, redcap_url=redcap_url)
 ```
 
-#### Export Records from Redcap
+#### Export Complete Records from Redcap
 ```python
 from pprint import print
 
@@ -54,7 +50,32 @@ from pprint import print
 data_export = rc.export_records(rawOrLabel='label', fields='consent_date, record_id')
 pprint(data_export)  # If successful, data_export is a list of dicts
 ```
+
+#### Export Select data from Redcap
+```python
+from pprint import print
+
+# Export all data for only record id 1, 2, and 3 from all events
+data_export = rc.export_records(rawOrLabel='label', records='1,2,3')
+pprint(data_export)  # If successful, data_export is a list of dicts
+
+# Export all data for only record id 1, 2, and 3 from the baseline event only. Use the raw, not labeled event.
+data_export = rc.export_records(rawOrLabel='label', records='1,2,3', events='baseline_arm_1')
+pprint(data_export)  # If successful, data_export is a list of dicts
+
+# Export data from a single form for only record id 1, 2, and 3 from the baseline event.
+# Use the raw, not labeled event and form name. Separate multiple criteria with a comma.
+data_export = rc.export_records(rawOrLabel='label', records='1,2,3', 
+                                events='baseline_arm_1', forms='randomization_and_group_form')
+pprint(data_export)  # If successful, data_export is a list of dicts
+
+```
+
 #### Import Records to Redcap
+
+Note when importing data, be sure to specify record_id and redcap_event_name.
+Also, if the project contains repeating instruments, also be sure to add redcap_repeat_instrument and redcap_repeat_instance to each record. Failure to do so may result in unintended overwriting of data. It is strongly advisable to practice importing in a copy of your production project and checking the outcome before updating a production project. 
+
 ```python
 import pandas as pd
 
@@ -80,8 +101,8 @@ for d in data:
     import_return = rc.import_records(data_to_upload=record_to_upload)
 
 
-# Default behavior does not overwrite existing Redcap data with blank field values. Use overwriteBehavior='overwrite' to do so for each field being imported.
-# For example, say we want to reset the consent dates to blanks for testing purposes
+# Default behavior does not overwrite existing Redcap data with blank field values. Use overwriteBehavior='overwrite' to do so for each field being imported. There are in fact legitimate use cases for removing existing data, in which case you must use the overwrite option.
+# For example, say we want to reset the consent dates above to blanks for testing purposes
 for d in data:
     d['consent_date'] = ''
     record_to_upload = json.dumps(d)
@@ -108,6 +129,8 @@ rc.import_records(data_to_upload=json.dumps(data))
 # returns {'count': 2} if successful
 ```
 #### Import File to Redcap
+
+Unlike the records import, file import does not use the repeating instrument parameter, and the instance parameter name is different.
 ```python
 # Import a file into a repeating instrument, an apparently undocumented feature
 import_response = rc.import_file(event='data_import_arm_1',
