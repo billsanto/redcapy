@@ -42,32 +42,33 @@ redcap_token2 = os.environ['your other project token string']
 rc2 = Redcapy(api_token=redcap_token2, redcap_url=redcap_url)
 ```
 
-#### Export Complete Records from Redcap
+#### Export Records from Redcap
+
+Note that if you specify an invalid field name, it will be ignored.
 ```python
 from pprint import print
+
+# Full export. Projects with a lot of data (events, fields, ids) will take noticeably longer to download. 
+data_export = rc.export_records(rawOrLabel='label')
+pprint(data_export)  # If successful, data_export is a list of dicts
 
 # Export select fields from all events
 data_export = rc.export_records(rawOrLabel='label', fields='consent_date, record_id')
-pprint(data_export)  # If successful, data_export is a list of dicts
-```
-
-#### Export Select data from Redcap
-```python
-from pprint import print
+pprint(data_export) 
 
 # Export all data for only record id 1, 2, and 3 from all events
 data_export = rc.export_records(rawOrLabel='label', records='1,2,3')
-pprint(data_export)  # If successful, data_export is a list of dicts
+pprint(data_export)
 
 # Export all data for only record id 1, 2, and 3 from the baseline event only. Use the raw, not labeled event.
 data_export = rc.export_records(rawOrLabel='label', records='1,2,3', events='baseline_arm_1')
-pprint(data_export)  # If successful, data_export is a list of dicts
+pprint(data_export)
 
 # Export data from a single form for only record id 1, 2, and 3 from the baseline event.
 # Use the raw, not labeled event and form name. Separate multiple criteria with a comma.
 data_export = rc.export_records(rawOrLabel='label', records='1,2,3', 
                                 events='baseline_arm_1', forms='randomization_and_group_form')
-pprint(data_export)  # If successful, data_export is a list of dicts
+pprint(data_export)
 
 ```
 
