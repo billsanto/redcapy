@@ -101,7 +101,9 @@ for d in data:
     import_return = rc.import_records(data_to_upload=record_to_upload)
 
 
-# Default behavior does not overwrite existing Redcap data with blank field values. Use overwriteBehavior='overwrite' to do so for each field being imported. There are in fact legitimate use cases for removing existing data, in which case you must use the overwrite option.
+# Default behavior does not overwrite existing Redcap data with blank field values. 
+# Use overwriteBehavior='overwrite' to do so for each field being imported. 
+# Note that there are legitimate use cases for removing existing data, in which case you must use the overwrite option.
 # For example, say we want to reset the consent dates above to blanks for testing purposes
 for d in data:
     d['consent_date'] = ''
