@@ -17,7 +17,7 @@ Currently, the following features are known to work in Redcap 9.0.
 - export survey link
 - export events
 
-The following worked in 7.4.7 but have not been tested recently.  Similarly, the unit test notebook has not been recently updated.
+The following worked in 7.4.7 but have not been tested recently.
 
 - delete form
 
