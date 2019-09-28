@@ -77,6 +77,9 @@ pprint(data_export)
 Note when importing data, be sure to specify record_id and redcap_event_name.
 Also, if the project contains repeating instruments, also be sure to add redcap_repeat_instrument and redcap_repeat_instance to each record. Failure to do so may result in unintended overwriting of data. It is strongly advisable to practice importing in a copy of your production project and checking the outcome before updating a production project. 
 
+Note that upon a successful import, the count value in the response is a reference to the number of record IDs affected, not the actual number of records (ID/event combinations). This matters when checking the response from a bulk import, in contrast to a record by record import.
+
+Also, a record imported into Redcap, if identical to all the existing values in that record, will return a positive API response, but that will not be evident from checking the log in the Redcap UI, which will show no evidence of the import. In the UI, only fields which have changed will be listed. So if data for 5 record_ids are imported into Redcap, and all the values are identical to existing data in Redcap, the API response count = 5, but there will be no entries in the Redcap log. 
 ```python
 import pandas as pd
 
